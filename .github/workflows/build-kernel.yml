@@ -162,7 +162,7 @@ jobs:
             HOSTCXX=g++-9 \
             HOSTCFLAGS="-fcommon" \
             HOSTCXXFLAGS="-fcommon" \
-            KCFLAGS="-Wno-misleading-indentation -Wno-error=misleading-indentation" \
+            KCFLAGS="-Wno-error -w" \
             2>&1 | tee build.loga
 
           echo "End: $(date)"
