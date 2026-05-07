@@ -34,16 +34,16 @@ jobs:
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 90
           sudo ln -sf /usr/bin/python3 /usr/bin/python
 
-      - name: Clone & Patch
+- name: Clone & Patch
         run: |
           git clone --depth=1 --branch ${{ github.event.inputs.KERNEL_BRANCH }} \
             https://github.com/${{ github.event.inputs.KERNEL_SOURCE }}.git kernel_source
 
           cd kernel_source
 
-          # Patch KernelSU
-          curl -LSs https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh \
-            | bash -s ${{ github.event.inputs.KSUN_BRANCH }}
+          # Patch KernelSU dengan versi lama yang kompatibel kernel 4.9
+          curl -LSs https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh \
+            | bash -s v0.9.5
 
           # Fix gcc-wrapper.py Python 2 → 3
           printf '#!/usr/bin/env python3\nimport sys,subprocess\ndef run():\n    p=subprocess.Popen(sys.argv[1:],stderr=subprocess.PIPE,stdout=subprocess.PIPE)\n    o,e=p.communicate()\n    if o: sys.stdout.buffer.write(o)\n    if e: sys.stderr.buffer.write(e)\n    return p.returncode\nsys.exit(run())\n' > scripts/gcc-wrapper.py
