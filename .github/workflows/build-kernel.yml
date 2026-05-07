@@ -5,10 +5,10 @@ on:
     inputs:
       KERNEL_SOURCE:
         description: 'Kernel Source (GitHub user/repo)'
-        default: 'ArrowOS-Devices/android_kernel_xiaomi_sdm845'
+        default: 'MiCode/Xiaomi_Kernel_OpenSource'
       KERNEL_BRANCH:
         description: 'Kernel Branch'
-        default: 'arrow-10.0'
+        default: 'beryllium-p-oss'
       KERNEL_DEFCONFIG:
         description: 'Defconfig'
         default: 'beryllium_defconfig'
@@ -40,7 +40,7 @@ jobs:
       # ─────────────────────────────────────────────
       - name: Validate boot.img exists
         run: |
-          if [ ! -f "$GITHUB_WORKSPACE/scripts/boot.img" ]; then
+          if [ ! -f "$GITHUB_WORKSPACE/boot.img" ]; then
             echo "❌ ERROR: boot.img tidak ditemukan di root repository!"
             echo "   Pastikan kamu sudah commit file boot.img ke root repo kamu."
             echo "   Jalankan: git add boot.img && git commit -m 'add boot.img' && git push"
@@ -318,7 +318,7 @@ jobs:
 
           # ── Unpack boot.img original ──
           echo "📦 Unpacking boot.img original (dari repository)..."
-          cp "$GITHUB_WORKSPACE/scripts/boot.img" original-boot.img
+          cp "$GITHUB_WORKSPACE/boot.img" original-boot.img
           ./magiskboot unpack original-boot.img
 
           echo "📋 Isi setelah unpack:"
