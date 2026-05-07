@@ -18,7 +18,7 @@ on:
       KSUN_BRANCH:
         description: 'KernelSU Next Branch'
         required: true
-        default: 'next'
+        default: 'main'
 
 jobs:
   build:
@@ -47,7 +47,6 @@ jobs:
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 90
 
           # Fix: buat symlink python → python3
-          # Kernel 4.9 memanggil 'python' tapi Ubuntu 22.04 hanya punya 'python3'
           sudo ln -sf /usr/bin/python3 /usr/bin/python
 
           gcc --version
@@ -117,8 +116,8 @@ jobs:
           EOF
           chmod +x kernel_source/scripts/gcc-wrapper.py
           echo "gcc-wrapper.py berhasil ditulis ulang!"
-		  
-	  - name: Fix KernelSU syscall_fn_t untuk kernel 4.9
+
+      - name: Fix KernelSU syscall_fn_t untuk kernel 4.9
         run: |
           cd kernel_source
           grep -rl "syscall_fn_t" drivers/kernelsu/ 2>/dev/null | while read f; do
