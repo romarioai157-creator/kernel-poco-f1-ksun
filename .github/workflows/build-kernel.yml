@@ -1,0 +1,320 @@
+name: Build Kernel KSUN - Poco F1 (Beryllium)
+
+on:
+  workflow_dispatch:
+    inputs:
+      KERNEL_SOURCE:
+        description: 'Kernel Source Repo'
+        required: true
+        default: 'https://github.com/Tantangan45/android_kernel_xiaomi_beryllium'
+      KERNEL_BRANCH:
+        description: 'Kernel Branch'
+        required: true
+        default: 'ten'
+      KERNEL_DEFCONFIG:
+        description: 'Defconfig'
+        required: true
+        default: 'beryllium_defconfig'
+      KSUN_BRANCH:
+        description: 'KernelSU Next Branch'
+        required: true
+        default: 'next'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+
+    steps:
+      # ────────────────────────────────────────────
+      # 1. SETUP ENVIRONMENT
+      # ────────────────────────────────────────────
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            git make bc bison flex libssl-dev libelf-dev \
+            python3 python3-pip zip unzip curl wget \
+            gcc g++ build-essential libncurses-dev \
+            cpio lz4 zstd ccache
+
+      # ────────────────────────────────────────────
+      # 2. SETUP CCACHE (percepat build ulang)
+      # ────────────────────────────────────────────
+      - name: Setup CCache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-beryllium-${{ github.sha }}
+          restore-keys: ccache-beryllium-
+
+      # ────────────────────────────────────────────
+      # 3. DOWNLOAD TOOLCHAIN - Proton Clang 13
+      # ────────────────────────────────────────────
+      - name: Download Proton Clang 13
+        run: |
+          mkdir -p $HOME/toolchain/proton-clang
+          echo "Downloading Proton Clang 13..."
+          wget -q --show-progress \
+            "https://github.com/kdrag0n/proton-clang/archive/refs/heads/master.tar.gz" \
+            -O proton-clang.tar.gz || true
+          
+          # Fallback: pakai AOSP Clang jika Proton gagal
+          if [ ! -f proton-clang.tar.gz ] || [ $(stat -c%s proton-clang.tar.gz) -lt 1000000 ]; then
+            echo "Proton Clang download failed, using AOSP Clang 17..."
+            mkdir -p $HOME/toolchain/clang
+            wget -q "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r487747c.tar.gz" \
+              -O $HOME/toolchain/clang.tar.gz || true
+          else
+            tar -xf proton-clang.tar.gz -C $HOME/toolchain/proton-clang --strip-components=1
+            echo "Proton Clang extracted successfully"
+          fi
+
+      - name: Download Clang via apt (fallback reliable)
+        run: |
+          # Install clang dari apt sebagai fallback yang paling reliable
+          sudo apt-get install -y clang-14 lld-14 llvm-14 || true
+          sudo apt-get install -y clang lld llvm || true
+          
+          # Cek mana yang tersedia
+          if [ -d "$HOME/toolchain/proton-clang/bin" ]; then
+            echo "CLANG_PATH=$HOME/toolchain/proton-clang/bin" >> $GITHUB_ENV
+            echo "Using Proton Clang"
+            $HOME/toolchain/proton-clang/bin/clang --version
+          else
+            CLANG_BIN=$(which clang-14 2>/dev/null || which clang 2>/dev/null)
+            CLANG_DIR=$(dirname $CLANG_BIN)
+            echo "CLANG_PATH=$CLANG_DIR" >> $GITHUB_ENV
+            echo "Using system Clang: $CLANG_BIN"
+            $CLANG_BIN --version
+          fi
+
+      # Download GCC cross-compiler
+      - name: Download GCC Aarch64
+        run: |
+          sudo apt-get install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+          echo "GCC_AARCH64=$(which aarch64-linux-gnu-gcc)" >> $GITHUB_ENV
+          echo "GCC_ARM=$(which arm-linux-gnueabi-gcc)" >> $GITHUB_ENV
+          aarch64-linux-gnu-gcc --version
+
+      # ────────────────────────────────────────────
+      # 4. CLONE KERNEL SOURCE
+      # ────────────────────────────────────────────
+      - name: Clone Kernel Source
+        run: |
+          echo "Cloning kernel source..."
+          echo "Source: ${{ github.event.inputs.KERNEL_SOURCE }}"
+          echo "Branch: ${{ github.event.inputs.KERNEL_BRANCH }}"
+          
+          git clone --depth=1 \
+            --branch ${{ github.event.inputs.KERNEL_BRANCH }} \
+            ${{ github.event.inputs.KERNEL_SOURCE }} \
+            kernel_source
+          
+          echo "Kernel source cloned!"
+          ls kernel_source/
+
+      # ────────────────────────────────────────────
+      # 5. PATCH KERNELSU NEXT
+      # ────────────────────────────────────────────
+      - name: Patch KernelSU Next
+        run: |
+          cd kernel_source
+          echo "Patching KernelSU Next (${{ github.event.inputs.KSUN_BRANCH }})..."
+          
+          curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" \
+            | bash -s ${{ github.event.inputs.KSUN_BRANCH }}
+          
+          echo "KernelSU Next patch applied!"
+          
+          # Verifikasi patch berhasil
+          if [ -d "KernelSU" ]; then
+            echo "✅ KernelSU directory exists"
+            cat KernelSU/kernel/Makefile | head -5 || true
+          else
+            echo "⚠️ KernelSU directory not found, checking..."
+            ls -la
+          fi
+
+      # ────────────────────────────────────────────
+      # 6. SETUP BUILD ENVIRONMENT
+      # ────────────────────────────────────────────
+      - name: Setup Build Variables
+        run: |
+          # Tentukan compiler
+          CLANG_BIN=${{ env.CLANG_PATH }}
+          
+          # Set environment variables untuk build
+          echo "ARCH=arm64" >> $GITHUB_ENV
+          echo "SUBARCH=arm64" >> $GITHUB_ENV
+          echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
+          echo "CROSS_COMPILE_ARM32=arm-linux-gnueabi-" >> $GITHUB_ENV
+          echo "CC=$CLANG_BIN/clang" >> $GITHUB_ENV
+          echo "LD=$CLANG_BIN/ld.lld" >> $GITHUB_ENV
+          echo "AR=$CLANG_BIN/llvm-ar" >> $GITHUB_ENV
+          echo "NM=$CLANG_BIN/llvm-nm" >> $GITHUB_ENV
+          echo "OBJCOPY=$CLANG_BIN/llvm-objcopy" >> $GITHUB_ENV
+          echo "OBJDUMP=$CLANG_BIN/llvm-objdump" >> $GITHUB_ENV
+          echo "STRIP=$CLANG_BIN/llvm-strip" >> $GITHUB_ENV
+          
+          # Jumlah core untuk build
+          CORES=$(nproc --all)
+          echo "BUILD_JOBS=$CORES" >> $GITHUB_ENV
+          echo "Using $CORES CPU cores for build"
+
+      # ────────────────────────────────────────────
+      # 7. CONFIGURE KERNEL
+      # ────────────────────────────────────────────
+      - name: Configure Kernel (defconfig)
+        run: |
+          cd kernel_source
+          
+          echo "Using defconfig: ${{ github.event.inputs.KERNEL_DEFCONFIG }}"
+          
+          make O=out \
+            ARCH=arm64 \
+            CC=${{ env.CC }} \
+            CLANG_TRIPLE=${{ env.CLANG_TRIPLE }} \
+            CROSS_COMPILE=${{ env.CROSS_COMPILE }} \
+            CROSS_COMPILE_ARM32=${{ env.CROSS_COMPILE_ARM32 }} \
+            ${{ github.event.inputs.KERNEL_DEFCONFIG }}
+          
+          echo "✅ Defconfig applied!"
+
+      # ────────────────────────────────────────────
+      # 8. BUILD KERNEL
+      # ────────────────────────────────────────────
+      - name: Build Kernel
+        run: |
+          cd kernel_source
+          
+          echo "🔨 Starting kernel build with ${{ env.BUILD_JOBS }} jobs..."
+          echo "Start time: $(date)"
+          
+          make -j${{ env.BUILD_JOBS }} O=out \
+            ARCH=arm64 \
+            CC=${{ env.CC }} \
+            CLANG_TRIPLE=${{ env.CLANG_TRIPLE }} \
+            CROSS_COMPILE=${{ env.CROSS_COMPILE }} \
+            CROSS_COMPILE_ARM32=${{ env.CROSS_COMPILE_ARM32 }} \
+            LD=${{ env.LD }} \
+            AR=${{ env.AR }} \
+            NM=${{ env.NM }} \
+            OBJCOPY=${{ env.OBJCOPY }} \
+            OBJDUMP=${{ env.OBJDUMP }} \
+            STRIP=${{ env.STRIP }} \
+            2>&1 | tee build.log
+          
+          echo "End time: $(date)"
+          
+          # Cek hasil build
+          if [ -f "out/arch/arm64/boot/Image.gz-dtb" ]; then
+            echo "✅ Kernel Image.gz-dtb built successfully!"
+            ls -lh out/arch/arm64/boot/Image.gz-dtb
+          elif [ -f "out/arch/arm64/boot/Image.gz" ]; then
+            echo "✅ Kernel Image.gz built!"
+            ls -lh out/arch/arm64/boot/Image.gz
+          elif [ -f "out/arch/arm64/boot/Image" ]; then
+            echo "✅ Kernel Image built!"
+            ls -lh out/arch/arm64/boot/Image
+          else
+            echo "❌ Kernel build failed! Check build.log"
+            tail -50 build.log
+            exit 1
+          fi
+
+      # ────────────────────────────────────────────
+      # 9. REPACK BOOT.IMG
+      # ────────────────────────────────────────────
+      - name: Install Magiskboot
+        run: |
+          # Download magiskboot untuk repack boot.img
+          wget -q "https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk" \
+            -O Magisk.apk
+          unzip -p Magisk.apk lib/x86_64/libmagiskboot.so > magiskboot
+          chmod +x magiskboot
+          ./magiskboot --version || echo "magiskboot ready"
+
+      - name: Unpack Original Boot Image
+        run: |
+          cp scripts/boot.img . 2>/dev/null || echo "boot.img not in scripts/"
+          
+          # Cek boot.img tersedia
+          if [ ! -f "boot.img" ]; then
+            echo "❌ boot.img tidak ditemukan!"
+            echo "Pastikan boot.img ada di folder scripts/ di repo"
+            exit 1
+          fi
+          
+          echo "Unpacking boot.img..."
+          ./magiskboot unpack boot.img
+          ls -la
+
+      - name: Replace Kernel in Boot Image
+        run: |
+          # Cari kernel yang sudah di-build
+          KERNEL_PATH=""
+          if [ -f "kernel_source/out/arch/arm64/boot/Image.gz-dtb" ]; then
+            KERNEL_PATH="kernel_source/out/arch/arm64/boot/Image.gz-dtb"
+          elif [ -f "kernel_source/out/arch/arm64/boot/Image.gz" ]; then
+            KERNEL_PATH="kernel_source/out/arch/arm64/boot/Image.gz"
+          elif [ -f "kernel_source/out/arch/arm64/boot/Image" ]; then
+            KERNEL_PATH="kernel_source/out/arch/arm64/boot/Image"
+          fi
+          
+          echo "Using kernel: $KERNEL_PATH"
+          cp "$KERNEL_PATH" kernel
+          
+          echo "Repacking boot.img with new kernel..."
+          ./magiskboot repack boot.img new-boot.img
+          
+          ls -lh new-boot.img
+          echo "✅ new-boot.img created!"
+
+      # ────────────────────────────────────────────
+      # 10. UPLOAD ARTIFACT
+      # ────────────────────────────────────────────
+      - name: Prepare Release Files
+        run: |
+          mkdir -p release
+          cp new-boot.img release/boot-KSUN-beryllium-$(date +%Y%m%d).img
+          
+          # Info build
+          cat > release/BUILD_INFO.txt << EOF
+          ========================================
+          KERNEL BUILD INFO - Poco F1 (Beryllium)
+          ========================================
+          Build Date    : $(date)
+          Kernel Source : ${{ github.event.inputs.KERNEL_SOURCE }}
+          Branch        : ${{ github.event.inputs.KERNEL_BRANCH }}
+          Defconfig     : ${{ github.event.inputs.KERNEL_DEFCONFIG }}
+          KSUN Branch   : ${{ github.event.inputs.KSUN_BRANCH }}
+          ========================================
+          CARA FLASH:
+          1. Reboot ke Fastboot (Vol- + Power)
+          2. fastboot flash boot boot-KSUN-beryllium-*.img
+          3. fastboot reboot
+          4. Buka KernelSU Next app
+          ========================================
+          EOF
+          
+          ls -lh release/
+
+      - name: Upload Boot Image
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-KSUN-Beryllium-${{ github.run_number }}
+          path: release/
+          retention-days: 7
+
+      - name: Upload Build Log (jika gagal)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-failed
+          path: kernel_source/build.log
+          retention-days: 3
