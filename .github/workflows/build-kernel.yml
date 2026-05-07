@@ -117,6 +117,15 @@ jobs:
           EOF
           chmod +x kernel_source/scripts/gcc-wrapper.py
           echo "gcc-wrapper.py berhasil ditulis ulang!"
+		  
+	  - name: Fix KernelSU syscall_fn_t untuk kernel 4.9
+        run: |
+          cd kernel_source
+          grep -rl "syscall_fn_t" drivers/kernelsu/ 2>/dev/null | while read f; do
+            sed -i 's/syscall_fn_t/sys_call_ptr_t/g' "$f"
+            echo "Patched: $f"
+          done
+          echo "KernelSU syscall fix selesai!"
 
       - name: Build Kernel
         run: |
