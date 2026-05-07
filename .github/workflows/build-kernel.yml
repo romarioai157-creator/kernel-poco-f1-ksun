@@ -46,7 +46,12 @@ jobs:
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 90
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 90
 
+          # Fix utama: buat symlink python → python3
+          # Kernel 4.9 memanggil 'python' tapi Ubuntu 22.04 hanya punya 'python3'
+          sudo ln -sf /usr/bin/python3 /usr/bin/python
+
           gcc --version
+          python --version
           python3 --version
 
       - name: Setup CCache
@@ -82,43 +87,37 @@ jobs:
             | bash -s "${{ github.event.inputs.KSUN_BRANCH }}"
           echo "KernelSU Next patched!"
 
-- name: Fix Python2 and gcc-wrapper
+      - name: Fix gcc-wrapper.py (Python 2 to Python 3)
         run: |
-          # Fix 1: Buat symlink python → python3
-          # Ubuntu 22.04 tidak punya 'python', hanya 'python3'
-          sudo ln -sf /usr/bin/python3 /usr/bin/python
-          python --version
-
-          # Fix 2: Tulis ulang gcc-wrapper.py dengan Python 3 yang benar
           cat > kernel_source/scripts/gcc-wrapper.py << 'EOF'
-#!/usr/bin/env python3
-import sys
-import os
-import subprocess
+          #!/usr/bin/env python3
+          import sys
+          import os
+          import subprocess
 
-def run_gcc():
-    args = sys.argv[1:]
-    proc = subprocess.Popen(
-        args,
-        stderr=subprocess.PIPE,
-        stdout=subprocess.PIPE
-    )
-    stdout, stderr = proc.communicate()
+          def run_gcc():
+              args = sys.argv[1:]
+              proc = subprocess.Popen(
+                  args,
+                  stderr=subprocess.PIPE,
+                  stdout=subprocess.PIPE
+              )
+              stdout, stderr = proc.communicate()
 
-    if stdout:
-        sys.stdout.buffer.write(stdout)
+              if stdout:
+                  sys.stdout.buffer.write(stdout)
 
-    if stderr:
-        sys.stderr.buffer.write(stderr)
+              if stderr:
+                  sys.stderr.buffer.write(stderr)
 
-    return proc.returncode
+              return proc.returncode
 
-if __name__ == '__main__':
-    sys.exit(run_gcc())
-EOF
+          if __name__ == '__main__':
+              sys.exit(run_gcc())
+          EOF
           chmod +x kernel_source/scripts/gcc-wrapper.py
-          echo "Fix selesai!"
-		  
+          echo "gcc-wrapper.py berhasil ditulis ulang!"
+
       - name: Build Kernel
         run: |
           cd kernel_source
