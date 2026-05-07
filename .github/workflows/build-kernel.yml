@@ -36,7 +36,7 @@ jobs:
         uses: actions/checkout@v4
 
       # ─────────────────────────────────────────────
-      # 2. Validasi: pastikan scripts/boot.img ada
+      # 2. Validasi boot.img ada di scripts/
       # ─────────────────────────────────────────────
       - name: Validate boot.img exists
         run: |
@@ -62,11 +62,8 @@ jobs:
             libncurses-dev \
             binutils-aarch64-linux-gnu \
             binutils-arm-linux-gnueabi \
-            zstd \
-            ccache \
-            lz4 \
+            zstd ccache lz4 \
             device-tree-compiler
-
           sudo ln -sf /usr/bin/python3 /usr/bin/python
 
       # ─────────────────────────────────────────────
@@ -96,24 +93,25 @@ jobs:
       - name: Download Proton Clang toolchain
         run: |
           mkdir -p $HOME/toolchains/proton-clang
-
           CLANG_TAG=${{ github.event.inputs.CLANG_VERSION }}
           CLANG_URL="https://github.com/kdrag0n/proton-clang/releases/download/${CLANG_TAG}/proton-clang-${CLANG_TAG}.tar.zst"
 
           echo "📥 Downloading Proton Clang ${CLANG_TAG}..."
           wget -q --show-progress "${CLANG_URL}" -O /tmp/proton-clang.tar.zst || {
-            echo "⚠️  Tag ${CLANG_TAG} tidak tersedia, mencoba versi alternatif..."
-            CLANG_URL="https://github.com/kdrag0n/proton-clang/archive/refs/heads/master.tar.gz"
-            wget -q --show-progress "${CLANG_URL}" -O /tmp/proton-clang.tar.zst
+            echo "⚠️  Tag ${CLANG_TAG} tidak tersedia, mencoba master..."
+            wget -q --show-progress \
+              "https://github.com/kdrag0n/proton-clang/archive/refs/heads/master.tar.gz" \
+              -O /tmp/proton-clang.tar.zst
           }
 
           echo "📦 Extracting..."
-          tar -I zstd -xf /tmp/proton-clang.tar.zst -C $HOME/toolchains/proton-clang --strip-components=1 2>/dev/null || \
-          tar -xf /tmp/proton-clang.tar.zst -C $HOME/toolchains/proton-clang --strip-components=1
+          tar -I zstd -xf /tmp/proton-clang.tar.zst \
+            -C $HOME/toolchains/proton-clang --strip-components=1 2>/dev/null || \
+          tar -xf /tmp/proton-clang.tar.zst \
+            -C $HOME/toolchains/proton-clang --strip-components=1
 
           echo "CLANG_PATH=$HOME/toolchains/proton-clang/bin" >> $GITHUB_ENV
           echo "$HOME/toolchains/proton-clang/bin" >> $GITHUB_PATH
-
           $HOME/toolchains/proton-clang/bin/clang --version
           echo "✅ Proton Clang siap!"
 
@@ -122,7 +120,7 @@ jobs:
       # ─────────────────────────────────────────────
       - name: Clone kernel source
         run: |
-          echo "📥 Cloning ${{ github.event.inputs.KERNEL_SOURCE }} branch ${{ github.event.inputs.KERNEL_BRANCH }}..."
+          echo "📥 Cloning ${{ github.event.inputs.KERNEL_SOURCE }} @ ${{ github.event.inputs.KERNEL_BRANCH }}"
           git clone \
             --depth=1 \
             --branch ${{ github.event.inputs.KERNEL_BRANCH }} \
@@ -130,12 +128,11 @@ jobs:
             kernel_source
 
           cd kernel_source
-
-          KERNEL_VERSION=$(head -3 Makefile | grep -E "VERSION|PATCHLEVEL|SUBLEVEL" | awk '{print $3}' | tr '\n' '.' | sed 's/\.$//')
-          echo "📋 Kernel version dari Makefile: ${KERNEL_VERSION}"
+          KERNEL_VERSION=$(head -3 Makefile \
+            | grep -E "VERSION|PATCHLEVEL|SUBLEVEL" \
+            | awk '{print $3}' | tr '\n' '.' | sed 's/\.$//')
+          echo "📋 Kernel version: ${KERNEL_VERSION}"
           echo "KERNEL_VERSION=${KERNEL_VERSION}" >> $GITHUB_ENV
-
-          echo "📝 Latest commit:"
           git log --oneline -5
 
       # ─────────────────────────────────────────────
@@ -144,18 +141,11 @@ jobs:
       - name: Patch KernelSU
         run: |
           cd kernel_source
-
           KSU_VERSION=${{ github.event.inputs.KSU_VERSION }}
           echo "🔧 Patching KernelSU ${KSU_VERSION}..."
-
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" \
             | bash -s "${KSU_VERSION}"
-
-          if [ -d "KernelSU" ] || grep -r "KernelSU" drivers/ --include="Makefile" -l 2>/dev/null | head -1; then
-            echo "✅ KernelSU patch berhasil!"
-          else
-            echo "⚠️  KernelSU directory tidak ditemukan, cek apakah patch berjalan benar"
-          fi
+          echo "✅ KernelSU patch selesai!"
 
       # ─────────────────────────────────────────────
       # 8. Fix gcc-wrapper.py untuk Python3
@@ -211,18 +201,17 @@ PYSCRIPT
             echo "🚀 CCache aktif"
           fi
 
-          # ── Step 1: Generate defconfig ──
-          echo "⚙️  Generating defconfig: ${{ github.event.inputs.KERNEL_DEFCONFIG }}"
-          make O=out \
-            ARCH=arm64 \
+          # Step 1: defconfig
+          echo "⚙️  Generating defconfig..."
+          make O=out ARCH=arm64 \
             CC="${CC}" \
             CLANG_TRIPLE="${CLANG_TRIPLE}" \
             CROSS_COMPILE="${CROSS_COMPILE}" \
             CROSS_COMPILE_ARM32="${CROSS_COMPILE_ARM32}" \
             ${{ github.event.inputs.KERNEL_DEFCONFIG }}
 
-          # ── Step 2: Aktifkan config KernelSU ──
-          echo "⚙️  Applying KernelSU required configs..."
+          # Step 2: KernelSU configs
+          echo "⚙️  Applying KernelSU configs..."
           scripts/config --file out/.config \
             --enable  CONFIG_KPROBES \
             --enable  CONFIG_HAVE_KPROBES \
@@ -234,123 +223,97 @@ PYSCRIPT
             --enable  CONFIG_OVERLAY_FS \
             --enable  CONFIG_TMPFS_XATTR || true
 
-          # ── Step 3: Regenerate config ──
-          make O=out \
-            ARCH=arm64 \
+          # Step 3: olddefconfig
+          make O=out ARCH=arm64 \
             CC="${CC}" \
             CLANG_TRIPLE="${CLANG_TRIPLE}" \
             CROSS_COMPILE="${CROSS_COMPILE}" \
             olddefconfig
 
-          # ── Step 4: Build ──
-          echo "🔨 Building kernel dengan $(nproc) CPU cores..."
-          make -j$(nproc) \
-            O=out \
-            ARCH=arm64 \
+          # Step 4: Build
+          echo "🔨 Building dengan $(nproc) cores..."
+          make -j$(nproc) O=out ARCH=arm64 \
             CC="${CC}" \
             CLANG_TRIPLE="${CLANG_TRIPLE}" \
             CROSS_COMPILE="${CROSS_COMPILE}" \
             CROSS_COMPILE_ARM32="${CROSS_COMPILE_ARM32}" \
-            AR="${AR}" \
-            NM="${NM}" \
-            OBJCOPY="${OBJCOPY}" \
-            OBJDUMP="${OBJDUMP}" \
-            STRIP="${STRIP}" \
-            LD="${LD}" \
-            HOSTCC="gcc" \
-            HOSTCXX="g++" \
+            AR="${AR}" NM="${NM}" \
+            OBJCOPY="${OBJCOPY}" OBJDUMP="${OBJDUMP}" \
+            STRIP="${STRIP}" LD="${LD}" \
+            HOSTCC="gcc" HOSTCXX="g++" \
             HOSTCFLAGS="-fcommon" \
             KCFLAGS="-Wno-error -w" \
             2>&1 | tee build.log
 
-          # ── Step 5: Cek hasil build ──
-          echo ""
+          # Step 5: Cek hasil
           echo "🔍 Mencari kernel image..."
           if ls out/arch/arm64/boot/Image.gz-dtb 2>/dev/null; then
-            echo "✅ Ditemukan: Image.gz-dtb"
             echo "KERNEL_IMAGE=out/arch/arm64/boot/Image.gz-dtb" >> $GITHUB_ENV
           elif ls out/arch/arm64/boot/Image-dtb 2>/dev/null; then
-            echo "✅ Ditemukan: Image-dtb"
             echo "KERNEL_IMAGE=out/arch/arm64/boot/Image-dtb" >> $GITHUB_ENV
           elif ls out/arch/arm64/boot/Image.gz 2>/dev/null; then
-            echo "✅ Ditemukan: Image.gz"
             echo "KERNEL_IMAGE=out/arch/arm64/boot/Image.gz" >> $GITHUB_ENV
           elif ls out/arch/arm64/boot/Image 2>/dev/null; then
-            echo "✅ Ditemukan: Image"
             echo "KERNEL_IMAGE=out/arch/arm64/boot/Image" >> $GITHUB_ENV
           else
-            echo "❌ GAGAL: Kernel image tidak ditemukan!"
-            echo "📋 50 baris terakhir build.log:"
+            echo "❌ Kernel image tidak ditemukan!"
             tail -50 build.log
             exit 1
           fi
-
           ls -lah out/arch/arm64/boot/Image* 2>/dev/null || true
 
       # ─────────────────────────────────────────────
-      # 10. Repack boot.img
-      #     boot.img diambil dari: scripts/boot.img
+      # 10. Repack boot.img (dari scripts/boot.img)
       # ─────────────────────────────────────────────
       - name: Repack boot.img dengan kernel baru
         run: |
           echo "📥 Downloading magiskboot..."
           wget -q "https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk" \
             -O Magisk.apk
-
           unzip -p Magisk.apk lib/x86_64/libmagiskboot.so > magiskboot
           chmod +x magiskboot
           ./magiskboot --version && echo "✅ magiskboot siap!"
 
-          # ── Unpack boot.img dari folder scripts/ ──
           echo "📦 Unpacking scripts/boot.img..."
           cp "$GITHUB_WORKSPACE/scripts/boot.img" original-boot.img
           ./magiskboot unpack original-boot.img
-
-          echo "📋 Isi setelah unpack:"
           ls -lah
 
-          # ── Ganti kernel ──
           echo "🔄 Mengganti kernel..."
           KERNEL_IMG="kernel_source/${{ env.KERNEL_IMAGE }}"
-
           if [ ! -f "$KERNEL_IMG" ]; then
-            echo "❌ Kernel image tidak ditemukan di: $KERNEL_IMG"
+            echo "❌ Kernel image tidak ditemukan: $KERNEL_IMG"
             exit 1
           fi
-
           cp "$KERNEL_IMG" kernel
           echo "✅ Kernel baru: $(du -sh kernel)"
 
-          # ── Repack ──
-          echo "📦 Repacking boot.img..."
+          echo "📦 Repacking..."
           ./magiskboot repack original-boot.img new-boot.img
 
           if [ -f "new-boot.img" ]; then
-            echo "✅ new-boot.img berhasil dibuat!"
+            echo "✅ new-boot.img berhasil!"
             ls -lah new-boot.img original-boot.img
           else
-            echo "❌ GAGAL: new-boot.img tidak terbuat!"
+            echo "❌ GAGAL membuat new-boot.img!"
             exit 1
           fi
 
       # ─────────────────────────────────────────────
-      # 11. Verifikasi output
+      # 11. Verifikasi
       # ─────────────────────────────────────────────
       - name: Verify new-boot.img
         run: |
-          echo "🔍 Verifikasi new-boot.img..."
-
           ORIG_SIZE=$(stat -c%s original-boot.img)
           NEW_SIZE=$(stat -c%s new-boot.img)
           DIFF=$((NEW_SIZE - ORIG_SIZE))
           echo "📊 Original : $(numfmt --to=iec $ORIG_SIZE)"
           echo "📊 New      : $(numfmt --to=iec $NEW_SIZE)"
-          echo "📊 Selisih  : +$(numfmt --to=iec $DIFF) (kernel lebih besar = normal)"
-
+          echo "📊 Selisih  : +$(numfmt --to=iec $DIFF)"
           echo "✅ Verifikasi selesai!"
 
       # ─────────────────────────────────────────────
-      # 12. Upload new-boot.img
+      # 12. Upload artifact
       # ─────────────────────────────────────────────
       - name: Upload new-boot.img
         uses: actions/upload-artifact@v4
@@ -367,19 +330,15 @@ PYSCRIPT
         if: always()
         run: |
           echo "## 🏗️ Build Summary - Beryllium KernelSU" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Info | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Kernel Source | ${{ github.event.inputs.KERNEL_SOURCE }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Branch | ${{ github.event.inputs.KERNEL_BRANCH }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Defconfig | ${{ github.event.inputs.KERNEL_DEFCONFIG }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| KernelSU Version | ${{ github.event.inputs.KSU_VERSION }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Clang Version | ${{ github.event.inputs.CLANG_VERSION }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Run Number | #${{ github.run_number }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| KernelSU | ${{ github.event.inputs.KSU_VERSION }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Clang | ${{ github.event.inputs.CLANG_VERSION }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Run | #${{ github.run_number }} |" >> $GITHUB_STEP_SUMMARY
           if [ -f "new-boot.img" ]; then
             echo "### ✅ Build BERHASIL" >> $GITHUB_STEP_SUMMARY
-            echo "- new-boot.img: $(du -sh new-boot.img | cut -f1)" >> $GITHUB_STEP_SUMMARY
           else
             echo "### ❌ Build GAGAL" >> $GITHUB_STEP_SUMMARY
           fi
