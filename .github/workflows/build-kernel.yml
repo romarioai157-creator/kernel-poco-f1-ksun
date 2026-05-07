@@ -101,10 +101,12 @@ jobs:
             olddefconfig
 
           # Step 3: Compile dengan GCC
+          # HOSTCFLAGS=-fcommon fix "multiple definition of yylloc" di GCC 10+
           make -j${JOBS} O=out \
             ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            HOSTCFLAGS="-fcommon" \
             2>&1 | tee build.log
 
           echo "End: $(date)"
