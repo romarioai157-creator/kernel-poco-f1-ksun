@@ -85,49 +85,9 @@ jobs:
       - name: Fix gcc-wrapper.py (Python 2 to Python 3)
         run: |
           cd kernel_source
-          WRAPPER="scripts/gcc-wrapper.py"
-
-          if [ -f "$WRAPPER" ]; then
-            echo "Patching $WRAPPER untuk Python 3..."
-
-            python3 - <<'PYEOF'
-          import re
-
-          with open("scripts/gcc-wrapper.py", "r") as f:
-              content = f.read()
-
-          # Fix: print >> sys.stderr, expr  →  print(expr, file=sys.stderr)
-          content = re.sub(
-              r'print\s*>>\s*sys\.stderr,\s*(.+)',
-              r'print(\1, file=sys.stderr)',
-              content
-          )
-
-          # Fix: print >> sys.stdout, expr  →  print(expr)
-          content = re.sub(
-              r'print\s*>>\s*sys\.stdout,\s*(.+)',
-              r'print(\1)',
-              content
-          )
-
-          # Fix: bare print "string"  →  print("string")
-          content = re.sub(
-              r'^(\s*)print\s+"(.+)"',
-              r'\1print("\2")',
-              content,
-              flags=re.MULTILINE
-          )
-
-          with open("scripts/gcc-wrapper.py", "w") as f:
-              f.write(content)
-
-          print("gcc-wrapper.py patched successfully!")
-          PYEOF
-
-            echo "Hasil patch:"
-            grep -n "print" "$WRAPPER"
-          else
-            echo "gcc-wrapper.py tidak ditemukan, skip."
+          if [ -f "scripts/gcc-wrapper.py" ]; then
+            rm scripts/gcc-wrapper.py
+            echo "gcc-wrapper.py dihapus — build akan jalan tanpa wrapper"
           fi
 
       - name: Build Kernel
