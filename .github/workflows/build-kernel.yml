@@ -12,9 +12,9 @@ on:
       KERNEL_DEFCONFIG:
         description: 'Defconfig'
         default: 'beryllium_defconfig'
-      KSUN_BRANCH:
-        description: 'KernelSU Branch'
-        default: 'main'
+      KSU_VERSION:
+        description: 'KernelSU Version'
+        default: 'v0.9.5'
 
 jobs:
   build:
@@ -34,26 +34,19 @@ jobs:
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 90
           sudo ln -sf /usr/bin/python3 /usr/bin/python
 
-- name: Clone & Patch
+      - name: Clone & Patch
         run: |
           git clone --depth=1 --branch ${{ github.event.inputs.KERNEL_BRANCH }} \
             https://github.com/${{ github.event.inputs.KERNEL_SOURCE }}.git kernel_source
 
           cd kernel_source
 
-          # Patch KernelSU dengan versi lama yang kompatibel kernel 4.9
+          # Patch KernelSU original (kompatibel kernel 4.9)
           curl -LSs https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh \
-            | bash -s v0.9.5
+            | bash -s ${{ github.event.inputs.KSU_VERSION }}
 
           # Fix gcc-wrapper.py Python 2 → 3
           printf '#!/usr/bin/env python3\nimport sys,subprocess\ndef run():\n    p=subprocess.Popen(sys.argv[1:],stderr=subprocess.PIPE,stdout=subprocess.PIPE)\n    o,e=p.communicate()\n    if o: sys.stdout.buffer.write(o)\n    if e: sys.stderr.buffer.write(e)\n    return p.returncode\nsys.exit(run())\n' > scripts/gcc-wrapper.py
-
-          # Fix syscall_fn_t — tambah typedef di syscall_hook.h
-          HOOK_FILE="drivers/kernelsu/hook/syscall_hook.h"
-          if [ -f "$HOOK_FILE" ]; then
-            sed -i '1s/^/#include <linux\/types.h>\ntypedef asmlinkage long (*syscall_fn_t)(void);\n/' "$HOOK_FILE"
-            echo "syscall_fn_t typedef added!"
-          fi
 
       - name: Build
         run: |
@@ -93,7 +86,7 @@ jobs:
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: boot-KSUN-Beryllium-${{ github.run_number }}
+          name: boot-KSU-Beryllium-${{ github.run_number }}
           path: new-boot.img
           retention-days: 7
 
