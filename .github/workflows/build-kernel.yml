@@ -162,7 +162,8 @@ jobs:
             HOSTCXX=g++-9 \
             HOSTCFLAGS="-fcommon" \
             HOSTCXXFLAGS="-fcommon" \
-            2>&1 | tee build.log
+            KCFLAGS="-Wno-misleading-indentation -Wno-error=misleading-indentation" \
+            2>&1 | tee build.loga
 
           echo "End: $(date)"
           ls -lh out/arch/arm64/boot/ 2>/dev/null || true
