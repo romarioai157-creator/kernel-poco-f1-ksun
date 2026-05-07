@@ -1,4 +1,4 @@
-name: Build Kernel KSUN - Poco F1 (Beryllium)
+name: Build Kernel KSUN - Poco F1 (Beryllium) / Dipper
 
 on:
   workflow_dispatch:
@@ -6,15 +6,15 @@ on:
       KERNEL_SOURCE:
         description: 'Kernel Source (owner/repo)'
         required: true
-        default: 'ArrowOS-Devices/android_kernel_xiaomi_beryllium'
+        default: 'MiCode/Xiaomi_Kernel_OpenSource'
       KERNEL_BRANCH:
         description: 'Kernel Branch'
         required: true
-        default: 'arrow-10.0'
+        default: 'dipper-q-oss'
       KERNEL_DEFCONFIG:
         description: 'Defconfig'
         required: true
-        default: 'beryllium_defconfig'
+        default: 'sdm845-perf_defconfig'
       KSUN_BRANCH:
         description: 'KernelSU Next Branch'
         required: true
@@ -32,20 +32,31 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update -y
+          # Install GCC 9 — paling kompatibel dengan kernel 4.9
           sudo apt-get install -y \
-            git make bc bison flex libssl-dev libelf-dev \
-            python3 python3-pip zip unzip curl wget \
-            gcc g++ build-essential libncurses-dev \
-            cpio lz4 zstd ccache \
-            clang lld llvm \
-            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+            gcc-9 g++-9 \
+            gcc-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi \
+            git make bc bison flex \
+            libssl-dev libelf-dev \
+            python3 python3-pip \
+            zip unzip curl wget \
+            build-essential libncurses-dev \
+            cpio lz4 zstd ccache
+
+          # Set GCC 9 sebagai default
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 90
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 90
+          
+          gcc --version
+          aarch64-linux-gnu-gcc --version
 
       - name: Setup CCache
         uses: actions/cache@v4
         with:
           path: ~/.ccache
-          key: ccache-beryllium-${{ github.sha }}
-          restore-keys: ccache-beryllium-
+          key: ccache-dipper-${{ github.sha }}
+          restore-keys: ccache-dipper-
 
       - name: Clone Kernel Source
         run: |
@@ -79,44 +90,56 @@ jobs:
           JOBS=$(nproc --all)
           echo "Building with $JOBS jobs... Start: $(date)"
 
-          # Disable CONFIG_CC_STACKPROTECTOR_STRONG yang tidak kompatibel
-          # dengan compiler baru, pakai GCC untuk kernel 4.9
-          
-          # Step 1: defconfig pakai GCC
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          # HOSTCC eksplisit GCC 9 — fix yylloc & incompatibility
+          export HOSTCC=gcc-9
+          export HOSTCXX=g++-9
+          # -fcommon fix "multiple definition" di GCC 10+
+          export HOSTCFLAGS="-fcommon"
+          export HOSTCXXFLAGS="-fcommon"
+
+          # Step 1: Generate defconfig
           make O=out \
             ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            HOSTCC=gcc-9 \
             ${{ github.event.inputs.KERNEL_DEFCONFIG }}
 
-          # Step 2: Disable stackprotector yang tidak kompatibel
+          # Step 2: Disable config yang tidak kompatibel
           scripts/config --file out/.config \
             --disable CONFIG_CC_STACKPROTECTOR_STRONG \
-            --enable CONFIG_CC_STACKPROTECTOR_NONE || true
-          
+            --enable CONFIG_CC_STACKPROTECTOR_NONE \
+            --disable CONFIG_DEBUG_INFO || true
+
           # Sync config
           make O=out \
             ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
+            HOSTCC=gcc-9 \
             olddefconfig
 
-          # Step 3: Compile dengan GCC
-          # HOSTCFLAGS=-fcommon fix "multiple definition of yylloc" di GCC 10+
+          # Step 3: Compile
           make -j${JOBS} O=out \
             ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            HOSTCC=gcc-9 \
+            HOSTCXX=g++-9 \
             HOSTCFLAGS="-fcommon" \
+            HOSTCXXFLAGS="-fcommon" \
             2>&1 | tee build.log
 
           echo "End: $(date)"
           ls -lh out/arch/arm64/boot/ 2>/dev/null || true
 
-          if ls out/arch/arm64/boot/Image* 2>/dev/null | head -1 | grep -q Image; then
+          if ls out/arch/arm64/boot/Image* 2>/dev/null | grep -q Image; then
             echo "Kernel built successfully!"
           else
             echo "Kernel build FAILED!"
-            tail -100 build.log
+            tail -150 build.log
             exit 1
           fi
 
@@ -151,6 +174,11 @@ jobs:
             if [ -f "$f" ]; then KERNEL_PATH="$f"; break; fi
           done
 
+          if [ -z "$KERNEL_PATH" ]; then
+            echo "Kernel image tidak ditemukan!"
+            exit 1
+          fi
+
           cp "$KERNEL_PATH" kernel
           ./magiskboot repack original-boot.img new-boot.img
           ls -lh new-boot.img
@@ -159,7 +187,7 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: boot-KSUN-Beryllium-${{ github.run_number }}
+          name: boot-KSUN-Dipper-${{ github.run_number }}
           path: new-boot.img
           retention-days: 7
 
