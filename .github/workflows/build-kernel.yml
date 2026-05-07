@@ -6,10 +6,10 @@ on:
     inputs:
       KERNEL_SOURCE:
         description: 'Kernel Source (GitHub user/repo)'
-        default: 'MiCode/Xiaomi_Kernel_OpenSource'
+        default: 'ArrowOS-Devices/android_kernel_xiaomi_sdm845'
       KERNEL_BRANCH:
         description: 'Kernel Branch'
-        default: 'dipper-p-oss'
+        default: 'arrow-10.0'
       KERNEL_DEFCONFIG:
         description: 'Defconfig'
         default: 'beryllium_defconfig'
