@@ -1,23 +1,19 @@
-name: Build Kernel KSUN - Beryllium (SDM845)
+name: Build Kernel KSUN - Beryllium
 
 on:
   workflow_dispatch:
     inputs:
       KERNEL_SOURCE:
-        description: 'Kernel Source (owner/repo)'
-        required: true
+        description: 'Kernel Source'
         default: 'ArrowOS-Devices/android_kernel_xiaomi_sdm845'
       KERNEL_BRANCH:
         description: 'Kernel Branch'
-        required: true
         default: 'arrow-10.0'
       KERNEL_DEFCONFIG:
         description: 'Defconfig'
-        required: true
         default: 'beryllium_defconfig'
       KSUN_BRANCH:
-        description: 'KernelSU Next Branch'
-        required: true
+        description: 'KernelSU Branch'
         default: 'main'
 
 jobs:
@@ -26,130 +22,45 @@ jobs:
     timeout-minutes: 120
 
     steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install Dependencies
+      - name: Setup
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y \
-            gcc-9 g++-9 \
-            gcc-aarch64-linux-gnu \
-            gcc-arm-linux-gnueabi \
-            git make bc bison flex \
-            libssl-dev libelf-dev \
-            python3 python3-pip \
-            zip unzip curl wget \
-            build-essential libncurses-dev \
-            cpio lz4 zstd ccache
-
+          sudo apt-get update -y && sudo apt-get install -y \
+            gcc-9 g++-9 gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
+            git make bc bison flex libssl-dev libelf-dev \
+            python3 zip unzip curl wget build-essential ccache
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 90
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 90
-
-          # Fix: buat symlink python → python3
           sudo ln -sf /usr/bin/python3 /usr/bin/python
 
-          gcc --version
-          python --version
-          python3 --version
-
-      - name: Setup CCache
-        uses: actions/cache@v4
-        with:
-          path: ~/.ccache
-          key: ccache-beryllium-${{ github.sha }}
-          restore-keys: ccache-beryllium-
-
-      - name: Clone Kernel Source
+      - name: Clone & Patch
         run: |
-          echo "Cloning: ${{ github.event.inputs.KERNEL_SOURCE }}"
-          echo "Branch : ${{ github.event.inputs.KERNEL_BRANCH }}"
+          git clone --depth=1 --branch ${{ github.event.inputs.KERNEL_BRANCH }} \
+            https://github.com/${{ github.event.inputs.KERNEL_SOURCE }}.git kernel_source
 
-          git config --global advice.detachedHead false
+          cd kernel_source
 
-          git clone \
-            --depth=1 \
-            --single-branch \
-            --branch "${{ github.event.inputs.KERNEL_BRANCH }}" \
-            "https://github.com/${{ github.event.inputs.KERNEL_SOURCE }}.git" \
-            kernel_source
+          # Patch KernelSU
+          curl -LSs https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh \
+            | bash -s ${{ github.event.inputs.KSUN_BRANCH }}
 
-          echo "Clone selesai!"
-          ls kernel_source/ | head -20
+          # Fix gcc-wrapper.py Python 2 → 3
+          printf '#!/usr/bin/env python3\nimport sys,subprocess\ndef run():\n    p=subprocess.Popen(sys.argv[1:],stderr=subprocess.PIPE,stdout=subprocess.PIPE)\n    o,e=p.communicate()\n    if o: sys.stdout.buffer.write(o)\n    if e: sys.stderr.buffer.write(e)\n    return p.returncode\nsys.exit(run())\n' > scripts/gcc-wrapper.py
 
-      - name: Patch KernelSU Next
+          # Fix syscall_fn_t — tambah typedef di syscall_hook.h
+          HOOK_FILE="drivers/kernelsu/hook/syscall_hook.h"
+          if [ -f "$HOOK_FILE" ]; then
+            sed -i '1s/^/#include <linux\/types.h>\ntypedef asmlinkage long (*syscall_fn_t)(void);\n/' "$HOOK_FILE"
+            echo "syscall_fn_t typedef added!"
+          fi
+
+      - name: Build
         run: |
           cd kernel_source
-          echo "Patching KernelSU Next..."
-          curl -LSs \
-            "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" \
-            | bash -s "${{ github.event.inputs.KSUN_BRANCH }}"
-          echo "KernelSU Next patched!"
+          make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            HOSTCC=gcc-9 ${{ github.event.inputs.KERNEL_DEFCONFIG }}
 
-      - name: Fix gcc-wrapper.py (Python 2 to Python 3)
-        run: |
-          cat > kernel_source/scripts/gcc-wrapper.py << 'EOF'
-          #!/usr/bin/env python3
-          import sys
-          import os
-          import subprocess
-
-          def run_gcc():
-              args = sys.argv[1:]
-              proc = subprocess.Popen(
-                  args,
-                  stderr=subprocess.PIPE,
-                  stdout=subprocess.PIPE
-              )
-              stdout, stderr = proc.communicate()
-
-              if stdout:
-                  sys.stdout.buffer.write(stdout)
-
-              if stderr:
-                  sys.stderr.buffer.write(stderr)
-
-              return proc.returncode
-
-          if __name__ == '__main__':
-              sys.exit(run_gcc())
-          EOF
-          chmod +x kernel_source/scripts/gcc-wrapper.py
-          echo "gcc-wrapper.py berhasil ditulis ulang!"
-
-      - name: Fix KernelSU syscall_fn_t untuk kernel 4.9
-        run: |
-          cd kernel_source
-          grep -rl "syscall_fn_t" drivers/kernelsu/ 2>/dev/null | while read f; do
-            sed -i 's/syscall_fn_t/sys_call_ptr_t/g' "$f"
-            echo "Patched: $f"
-          done
-          echo "KernelSU syscall fix selesai!"
-
-      - name: Build Kernel
-        run: |
-          cd kernel_source
-          JOBS=$(nproc --all)
-          echo "Building with $JOBS jobs... Start: $(date)"
-
-          export ARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
-          export HOSTCC=gcc-9
-          export HOSTCXX=g++-9
-          export HOSTCFLAGS="-fcommon"
-          export HOSTCXXFLAGS="-fcommon"
-
-          # Step 1: Generate defconfig
-          make O=out \
-            ARCH=arm64 \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            HOSTCC=gcc-9 \
-            ${{ github.event.inputs.KERNEL_DEFCONFIG }}
-
-          # Step 2: Disable config yang tidak kompatibel
-          # + Enable KernelSU legacy (kprobes) untuk Non-GKI
           scripts/config --file out/.config \
             --disable CONFIG_CC_STACKPROTECTOR_STRONG \
             --enable CONFIG_CC_STACKPROTECTOR_NONE \
@@ -158,89 +69,38 @@ jobs:
             --enable CONFIG_HAVE_KPROBES \
             --enable CONFIG_KPROBE_EVENTS || true
 
-          # Sync config
-          make O=out \
-            ARCH=arm64 \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            HOSTCC=gcc-9 \
-            olddefconfig
+          make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            HOSTCC=gcc-9 olddefconfig
 
-          # Step 3: Compile
-          make -j${JOBS} O=out \
-            ARCH=arm64 \
+          make -j$(nproc) O=out ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            HOSTCC=gcc-9 \
-            HOSTCXX=g++-9 \
-            HOSTCFLAGS="-fcommon" \
-            HOSTCXXFLAGS="-fcommon" \
-            KCFLAGS="-Wno-error -w" \
+            HOSTCC=gcc-9 HOSTCXX=g++-9 \
+            HOSTCFLAGS="-fcommon" KCFLAGS="-Wno-error -w" \
             2>&1 | tee build.log
 
-          echo "End: $(date)"
-          ls -lh out/arch/arm64/boot/ 2>/dev/null || true
+          ls out/arch/arm64/boot/Image* && echo "SUCCESS!" || { tail -50 build.log; exit 1; }
 
-          if ls out/arch/arm64/boot/Image* 2>/dev/null | grep -q Image; then
-            echo "Kernel built successfully!"
-          else
-            echo "===== ERROR LINES ====="
-            grep -i "error:" build.log | head -50 || true
-            tail -100 build.log
-            exit 1
-          fi
-
-      - name: Install Magiskboot
+      - name: Repack Boot
         run: |
-          wget -q "https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk" \
-            -O Magisk.apk
-          unzip -p Magisk.apk lib/x86_64/libmagiskboot.so > magiskboot
-          chmod +x magiskboot
-
-      - name: Repack Boot Image
-        run: |
-          BOOT_IMG=""
-          for p in "ksun-kernel/scripts/boot.img" "scripts/boot.img"; do
-            if [ -f "$p" ]; then BOOT_IMG="$p"; break; fi
-          done
-
-          if [ -z "$BOOT_IMG" ]; then
-            echo "boot.img tidak ditemukan!"
-            find . -name "boot.img" 2>/dev/null
-            exit 1
-          fi
-
-          cp "$BOOT_IMG" original-boot.img
+          wget -q https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk -O Magisk.apk
+          unzip -p Magisk.apk lib/x86_64/libmagiskboot.so > magiskboot && chmod +x magiskboot
+          cp scripts/boot.img original-boot.img
           ./magiskboot unpack original-boot.img
-
-          KERNEL_PATH=""
-          for f in \
-            kernel_source/out/arch/arm64/boot/Image.gz-dtb \
-            kernel_source/out/arch/arm64/boot/Image.gz \
-            kernel_source/out/arch/arm64/boot/Image; do
-            if [ -f "$f" ]; then KERNEL_PATH="$f"; break; fi
-          done
-
-          if [ -z "$KERNEL_PATH" ]; then
-            echo "Kernel image tidak ditemukan!"
-            exit 1
-          fi
-
-          cp "$KERNEL_PATH" kernel
+          cp $(ls kernel_source/out/arch/arm64/boot/Image* | head -1) kernel
           ./magiskboot repack original-boot.img new-boot.img
-          ls -lh new-boot.img
-          echo "new-boot.img berhasil dibuat!"
 
-      - name: Upload Artifacts
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: boot-KSUN-Beryllium-${{ github.run_number }}
           path: new-boot.img
           retention-days: 7
 
-      - name: Upload Build Log (on failure)
+      - name: Upload Log (on failure)
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: build-log-failed-${{ github.run_number }}
+          name: build-log-${{ github.run_number }}
           path: kernel_source/build.log
           retention-days: 3
