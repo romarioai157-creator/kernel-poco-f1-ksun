@@ -93,14 +93,12 @@ jobs:
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
-          # HOSTCC eksplisit GCC 9 — fix yylloc & incompatibility
           export HOSTCC=gcc-9
           export HOSTCXX=g++-9
-          # -fcommon fix "multiple definition" di GCC 10+
           export HOSTCFLAGS="-fcommon"
           export HOSTCXXFLAGS="-fcommon"
 
-          # Step 1: Generate defconfig
+          # Step 1: defconfig
           make O=out \
             ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
@@ -108,21 +106,18 @@ jobs:
             HOSTCC=gcc-9 \
             ${{ github.event.inputs.KERNEL_DEFCONFIG }}
 
-          # Step 2: Disable config yang tidak kompatibel
+          # Step 2: Disable config incompatible
           scripts/config --file out/.config \
             --disable CONFIG_CC_STACKPROTECTOR_STRONG \
             --enable CONFIG_CC_STACKPROTECTOR_NONE \
-            --disable CONFIG_DEBUG_INFO || true
+            --disable CONFIG_DEBUG_INFO \
+            --disable CONFIG_VDSO || true
 
-          # Sync config
-          make O=out \
-            ARCH=arm64 \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            HOSTCC=gcc-9 \
-            olddefconfig
+          make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- HOSTCC=gcc-9 olddefconfig
 
-          # Step 3: Compile
-          make -j${JOBS} O=out \
+          # Step 3: Build — pakai -j4 dulu biar log tidak kacau
+          # stderr dipisah supaya error jelas terlihat
+          make -j4 O=out \
             ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
@@ -130,7 +125,13 @@ jobs:
             HOSTCXX=g++-9 \
             HOSTCFLAGS="-fcommon" \
             HOSTCXXFLAGS="-fcommon" \
-            2>&1 | tee build.log
+            2> >(tee build_error.log >&2) | tee build_stdout.log || true
+
+          # Gabungkan log
+          cat build_stdout.log build_error.log > build.log 2>/dev/null || true
+
+          echo "===== LAST 200 LINES ====="
+          tail -200 build.log
 
           echo "End: $(date)"
           ls -lh out/arch/arm64/boot/ 2>/dev/null || true
@@ -138,8 +139,8 @@ jobs:
           if ls out/arch/arm64/boot/Image* 2>/dev/null | grep -q Image; then
             echo "Kernel built successfully!"
           else
-            echo "Kernel build FAILED!"
-            tail -150 build.log
+            echo "===== ERROR LINES ====="
+            grep -i "error:" build.log | head -50 || true
             exit 1
           fi
 
