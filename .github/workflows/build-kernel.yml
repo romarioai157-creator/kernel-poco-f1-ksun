@@ -79,24 +79,30 @@ jobs:
           JOBS=$(nproc --all)
           echo "Building with $JOBS jobs... Start: $(date)"
 
+          # Disable CONFIG_CC_STACKPROTECTOR_STRONG yang tidak kompatibel
+          # dengan compiler baru, pakai GCC untuk kernel 4.9
+          
+          # Step 1: defconfig pakai GCC
           make O=out \
             ARCH=arm64 \
-            CC=clang \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             ${{ github.event.inputs.KERNEL_DEFCONFIG }}
 
+          # Step 2: Disable stackprotector yang tidak kompatibel
+          scripts/config --file out/.config \
+            --disable CONFIG_CC_STACKPROTECTOR_STRONG \
+            --enable CONFIG_CC_STACKPROTECTOR_NONE || true
+          
+          # Sync config
+          make O=out \
+            ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            olddefconfig
+
+          # Step 3: Compile dengan GCC
           make -j${JOBS} O=out \
             ARCH=arm64 \
-            CC=clang \
-            LD=ld.lld \
-            AR=llvm-ar \
-            NM=llvm-nm \
-            OBJCOPY=llvm-objcopy \
-            OBJDUMP=llvm-objdump \
-            STRIP=llvm-strip \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             2>&1 | tee build.log
