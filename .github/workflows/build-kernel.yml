@@ -9,7 +9,7 @@ on:
         default: 'MiCode/Xiaomi_Kernel_OpenSource'
       KERNEL_BRANCH:
         description: 'Kernel Branch'
-        default: 'beryllium-p-oss'
+        default: 'dipper-p-oss'
       KERNEL_DEFCONFIG:
         description: 'Defconfig'
         default: 'beryllium_defconfig'
