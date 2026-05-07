@@ -216,7 +216,7 @@ jobs:
           export OBJCOPY="${CLANG_PATH}/llvm-objcopy"
           export OBJDUMP="${CLANG_PATH}/llvm-objdump"
           export STRIP="${CLANG_PATH}/llvm-strip"
-          export LD="${CLANG_PATH}/ld.lld"
+          export LD="aarch64-linux-gnu-ld"  # GNU ld, kernel 4.9 tidak kompatibel dengan ld.lld
 
           # CCache wrapper jika aktif
           if [ "$USE_CCACHE" = "1" ]; then
@@ -258,6 +258,8 @@ jobs:
             olddefconfig
 
           # ── Step 4: Build ──
+          # Catatan: Kernel 4.9 MiCode harus pakai GNU ld, bukan ld.lld
+          # AR/NM/OBJCOPY/STRIP pakai LLVM tapi LD pakai GNU
           echo "🔨 Building kernel dengan $(nproc) CPU cores..."
           make -j$(nproc) \
             O=out \
@@ -271,7 +273,7 @@ jobs:
             OBJCOPY="${OBJCOPY}" \
             OBJDUMP="${OBJDUMP}" \
             STRIP="${STRIP}" \
-            LD="${LD}" \
+            LD="aarch64-linux-gnu-ld" \
             HOSTCC="gcc" \
             HOSTCXX="g++" \
             HOSTCFLAGS="-fcommon" \
