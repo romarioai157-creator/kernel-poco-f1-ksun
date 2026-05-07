@@ -1,4 +1,4 @@
-name: Build Kernel KSUN - Dipper (SDM845)
+name: Build Kernel KSUN - Beryllium (SDM845)
 
 on:
   workflow_dispatch:
@@ -6,15 +6,15 @@ on:
       KERNEL_SOURCE:
         description: 'Kernel Source (owner/repo)'
         required: true
-        default: 'MiCode/Xiaomi_Kernel_OpenSource'
+        default: 'ArrowOS-Devices/android_kernel_xiaomi_sdm845'
       KERNEL_BRANCH:
         description: 'Kernel Branch'
         required: true
-        default: 'dipper-q-oss'
+        default: 'arrow-10.0'
       KERNEL_DEFCONFIG:
         description: 'Defconfig'
         required: true
-        default: 'sdm845-perf_defconfig'
+        default: 'beryllium_defconfig'
       KSUN_BRANCH:
         description: 'KernelSU Next Branch'
         required: true
@@ -46,7 +46,7 @@ jobs:
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 90
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 90
 
-          # Fix utama: buat symlink python → python3
+          # Fix: buat symlink python → python3
           # Kernel 4.9 memanggil 'python' tapi Ubuntu 22.04 hanya punya 'python3'
           sudo ln -sf /usr/bin/python3 /usr/bin/python
 
@@ -58,8 +58,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.ccache
-          key: ccache-dipper-${{ github.sha }}
-          restore-keys: ccache-dipper-
+          key: ccache-beryllium-${{ github.sha }}
+          restore-keys: ccache-beryllium-
 
       - name: Clone Kernel Source
         run: |
@@ -141,10 +141,14 @@ jobs:
             ${{ github.event.inputs.KERNEL_DEFCONFIG }}
 
           # Step 2: Disable config yang tidak kompatibel
+          # + Enable KernelSU legacy (kprobes) untuk Non-GKI
           scripts/config --file out/.config \
             --disable CONFIG_CC_STACKPROTECTOR_STRONG \
             --enable CONFIG_CC_STACKPROTECTOR_NONE \
-            --disable CONFIG_DEBUG_INFO || true
+            --disable CONFIG_DEBUG_INFO \
+            --enable CONFIG_KPROBES \
+            --enable CONFIG_HAVE_KPROBES \
+            --enable CONFIG_KPROBE_EVENTS || true
 
           # Sync config
           make O=out \
@@ -163,7 +167,7 @@ jobs:
             HOSTCFLAGS="-fcommon" \
             HOSTCXXFLAGS="-fcommon" \
             KCFLAGS="-Wno-error -w" \
-            2>&1 | tee build.loga
+            2>&1 | tee build.log
 
           echo "End: $(date)"
           ls -lh out/arch/arm64/boot/ 2>/dev/null || true
@@ -221,7 +225,7 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: boot-KSUN-Dipper-${{ github.run_number }}
+          name: boot-KSUN-Beryllium-${{ github.run_number }}
           path: new-boot.img
           retention-days: 7
 
