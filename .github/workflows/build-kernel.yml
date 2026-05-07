@@ -1,4 +1,4 @@
-name: Build Kernel KSUN - Poco F1 (Beryllium) / Dipper
+name: Build Kernel KSUN - Dipper (SDM845)
 
 on:
   workflow_dispatch:
@@ -32,7 +32,6 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update -y
-          # Install GCC 9 — paling kompatibel dengan kernel 4.9
           sudo apt-get install -y \
             gcc-9 g++-9 \
             gcc-aarch64-linux-gnu \
@@ -44,12 +43,11 @@ jobs:
             build-essential libncurses-dev \
             cpio lz4 zstd ccache
 
-          # Set GCC 9 sebagai default
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 90
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 90
-          
+
           gcc --version
-          aarch64-linux-gnu-gcc --version
+          python3 --version
 
       - name: Setup CCache
         uses: actions/cache@v4
@@ -83,53 +81,48 @@ jobs:
             "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" \
             | bash -s "${{ github.event.inputs.KSUN_BRANCH }}"
           echo "KernelSU Next patched!"
-	
-	- name: Fix gcc-wrapper.py (Python 2 → Python 3)
+
+      - name: Fix gcc-wrapper.py (Python 2 to Python 3)
         run: |
           cd kernel_source
           WRAPPER="scripts/gcc-wrapper.py"
-          
+
           if [ -f "$WRAPPER" ]; then
             echo "Patching $WRAPPER untuk Python 3..."
-            
-            # Fix: print >> sys.stderr, x  →  print(x, file=sys.stderr)
-            sed -i 's/print >> sys\.stderr,\s*/print(/g' "$WRAPPER"
-            
-            # Tambahkan ", file=sys.stderr)" di akhir baris print yang sudah diubah
-            # Lebih aman: replace seluruh file dengan Python 3 version
+
             python3 - <<'PYEOF'
-import re
+          import re
 
-with open("scripts/gcc-wrapper.py", "r") as f:
-    content = f.read()
+          with open("scripts/gcc-wrapper.py", "r") as f:
+              content = f.read()
 
-# Fix print >> sys.stderr, expr  →  print(expr, file=sys.stderr)
-content = re.sub(
-    r'print\s*>>\s*sys\.stderr,\s*(.+)',
-    r'print(\1, file=sys.stderr)',
-    content
-)
+          # Fix: print >> sys.stderr, expr  →  print(expr, file=sys.stderr)
+          content = re.sub(
+              r'print\s*>>\s*sys\.stderr,\s*(.+)',
+              r'print(\1, file=sys.stderr)',
+              content
+          )
 
-# Fix print >> sys.stdout, expr  →  print(expr)
-content = re.sub(
-    r'print\s*>>\s*sys\.stdout,\s*(.+)',
-    r'print(\1)',
-    content
-)
+          # Fix: print >> sys.stdout, expr  →  print(expr)
+          content = re.sub(
+              r'print\s*>>\s*sys\.stdout,\s*(.+)',
+              r'print(\1)',
+              content
+          )
 
-# Fix bare print "string"  →  print("string")
-content = re.sub(
-    r'^(\s*)print\s+"(.+)"',
-    r'\1print("\2")',
-    content,
-    flags=re.MULTILINE
-)
+          # Fix: bare print "string"  →  print("string")
+          content = re.sub(
+              r'^(\s*)print\s+"(.+)"',
+              r'\1print("\2")',
+              content,
+              flags=re.MULTILINE
+          )
 
-with open("scripts/gcc-wrapper.py", "w") as f:
-    f.write(content)
+          with open("scripts/gcc-wrapper.py", "w") as f:
+              f.write(content)
 
-print("gcc-wrapper.py patched successfully!")
-PYEOF
+          print("gcc-wrapper.py patched successfully!")
+          PYEOF
 
             echo "Hasil patch:"
             grep -n "print" "$WRAPPER"
@@ -151,7 +144,7 @@ PYEOF
           export HOSTCFLAGS="-fcommon"
           export HOSTCXXFLAGS="-fcommon"
 
-          # Step 1: defconfig
+          # Step 1: Generate defconfig
           make O=out \
             ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
@@ -159,18 +152,21 @@ PYEOF
             HOSTCC=gcc-9 \
             ${{ github.event.inputs.KERNEL_DEFCONFIG }}
 
-          # Step 2: Disable config incompatible
+          # Step 2: Disable config yang tidak kompatibel
           scripts/config --file out/.config \
             --disable CONFIG_CC_STACKPROTECTOR_STRONG \
             --enable CONFIG_CC_STACKPROTECTOR_NONE \
-            --disable CONFIG_DEBUG_INFO \
-            --disable CONFIG_VDSO || true
+            --disable CONFIG_DEBUG_INFO || true
 
-          make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- HOSTCC=gcc-9 olddefconfig
+          # Sync config
+          make O=out \
+            ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            HOSTCC=gcc-9 \
+            olddefconfig
 
-          # Step 3: Build — pakai -j4 dulu biar log tidak kacau
-          # stderr dipisah supaya error jelas terlihat
-          make -j4 O=out \
+          # Step 3: Compile
+          make -j${JOBS} O=out \
             ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
@@ -178,13 +174,7 @@ PYEOF
             HOSTCXX=g++-9 \
             HOSTCFLAGS="-fcommon" \
             HOSTCXXFLAGS="-fcommon" \
-            2> >(tee build_error.log >&2) | tee build_stdout.log || true
-
-          # Gabungkan log
-          cat build_stdout.log build_error.log > build.log 2>/dev/null || true
-
-          echo "===== LAST 200 LINES ====="
-          tail -200 build.log
+            2>&1 | tee build.log
 
           echo "End: $(date)"
           ls -lh out/arch/arm64/boot/ 2>/dev/null || true
@@ -194,6 +184,7 @@ PYEOF
           else
             echo "===== ERROR LINES ====="
             grep -i "error:" build.log | head -50 || true
+            tail -100 build.log
             exit 1
           fi
 
